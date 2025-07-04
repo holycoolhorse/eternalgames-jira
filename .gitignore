@@ -11,6 +11,9 @@ dist/
 build/
 .vite/
 
+# Backend public directory (copied from frontend build)
+backend/public/
+
 # Environment files
 .env
 .env.local
