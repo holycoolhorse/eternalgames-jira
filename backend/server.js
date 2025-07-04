@@ -18,25 +18,70 @@ const db = require('./config/database');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+// Global error handling for uncaught exceptions
+process.on('uncaughtException', (error) => {
+  console.error('Uncaught Exception:', error);
+  if (process.env.NODE_ENV !== 'production') {
+    process.exit(1);
+  }
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('Unhandled Rejection at:', promise, 'reason:', reason);
+  if (process.env.NODE_ENV !== 'production') {
+    process.exit(1);
+  }
+});
+
 // Security middleware
 app.use(helmet());
-app.use(cors({
-  origin: [
-    'http://localhost:5173',
-    'http://localhost:5174', 
-    'http://localhost:5175',
-    'http://localhost:5176',
-    'http://localhost:5177',
-    'http://localhost:5178',
-    process.env.FRONTEND_URL || 'http://localhost:5173'
-  ],
-  credentials: true
-}));
 
-// Rate limiting
+// CORS configuration optimized for production
+const corsOptions = {
+  origin: process.env.NODE_ENV === 'production' 
+    ? (origin, callback) => {
+        // Allow requests with no origin (like mobile apps or curl requests)
+        if (!origin) return callback(null, true);
+        
+        const allowedOrigins = [
+          process.env.FRONTEND_URL,
+          // Add your Vercel app URL here
+        ].filter(Boolean);
+        
+        if (allowedOrigins.length === 0) {
+          // If no specific origins set, allow all in production (not recommended for real apps)
+          return callback(null, true);
+        }
+        
+        if (allowedOrigins.includes(origin)) {
+          return callback(null, true);
+        }
+        
+        return callback(new Error('Not allowed by CORS'));
+      }
+    : [
+        'http://localhost:5173',
+        'http://localhost:5174', 
+        'http://localhost:5175',
+        'http://localhost:5176',
+        'http://localhost:5177',
+        'http://localhost:5178',
+        process.env.FRONTEND_URL || 'http://localhost:5173'
+      ],
+  credentials: true
+};
+
+app.use(cors(corsOptions));
+
+// Rate limiting optimized for production
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 1000 // limit each IP to 1000 requests per windowMs (increased for development)
+  max: process.env.NODE_ENV === 'production' ? 200 : 1000, // Reasonable limit for production
+  message: {
+    error: 'Too many requests from this IP, please try again later.'
+  },
+  standardHeaders: true, // Return rate limit info in the `RateLimit-*` headers
+  legacyHeaders: false, // Disable the `X-RateLimit-*` headers
 });
 app.use(limiter);
 
@@ -44,17 +89,20 @@ app.use(limiter);
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
-// Logging
-app.use(morgan('combined'));
-
-// Static files (for uploaded files)
-app.use('/uploads', express.static('uploads'));
-
-// Serve frontend static files in production
+// Logging - more minimal in production
 if (process.env.NODE_ENV === 'production') {
-  const path = require('path');
-  app.use(express.static(path.join(__dirname, 'public')));
+  app.use(morgan('combined'));
+} else {
+  app.use(morgan('dev'));
 }
+
+// Static files (for uploaded files) - Vercel optimized
+const path = require('path');
+const uploadPath = process.env.NODE_ENV === 'production' 
+  ? '/tmp/uploads'  // Vercel temp directory
+  : path.join(__dirname, 'uploads');
+
+app.use('/uploads', express.static(uploadPath));
 
 // Routes
 app.use('/api/auth', authRoutes);
@@ -68,14 +116,6 @@ app.get('/api/health', (req, res) => {
   res.json({ status: 'OK', timestamp: new Date().toISOString() });
 });
 
-// Serve frontend in production
-if (process.env.NODE_ENV === 'production') {
-  const path = require('path');
-  app.get('*', (req, res) => {
-    res.sendFile(path.join(__dirname, 'public/index.html'));
-  });
-}
-
 // Error handling middleware
 app.use((err, req, res, next) => {
   console.error(err.stack);
@@ -85,20 +125,36 @@ app.use((err, req, res, next) => {
   });
 });
 
-// 404 handler
-app.use('*', (req, res) => {
-  res.status(404).json({ message: 'Route not found' });
+// 404 handler for API routes only
+app.use('/api/*', (req, res) => {
+  res.status(404).json({ message: 'API route not found' });
 });
 
 // Initialize database and start server
-db.initialize().then(() => {
-  app.listen(PORT, () => {
-    console.log(`🚀 Server running on port ${PORT}`);
-    console.log(`📊 Environment: ${process.env.NODE_ENV || 'development'}`);
-  });
-}).catch(err => {
-  console.error('Failed to initialize database:', err);
-  process.exit(1);
-});
+const initializeApp = async () => {
+  try {
+    await db.initialize();
+    console.log('✅ Database initialized successfully');
+    
+    if (process.env.NODE_ENV !== 'production') {
+      app.listen(PORT, () => {
+        console.log(`🚀 Server running on port ${PORT}`);
+        console.log(`📊 Environment: ${process.env.NODE_ENV || 'development'}`);
+        console.log(`🔗 Health check: http://localhost:${PORT}/api/health`);
+      });
+    } else {
+      console.log('🚀 Server ready for production');
+    }
+  } catch (err) {
+    console.error('❌ Failed to initialize database:', err);
+    if (process.env.NODE_ENV !== 'production') {
+      process.exit(1);
+    }
+    throw err;
+  }
+};
+
+// Start the application
+initializeApp();
 
 module.exports = app;

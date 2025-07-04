@@ -1,7 +1,11 @@
 const sqlite3 = require('sqlite3').verbose();
 const path = require('path');
+const fs = require('fs');
 
-const DB_PATH = path.join(__dirname, '..', 'database.sqlite');
+// Vercel'de SQLite için optimize edilmiş path
+const DB_PATH = process.env.NODE_ENV === 'production' 
+  ? '/tmp/database.sqlite'  // Vercel temp directory
+  : path.join(__dirname, '..', 'database.sqlite');
 
 class Database {
   constructor() {
@@ -10,12 +14,20 @@ class Database {
 
   async initialize() {
     return new Promise((resolve, reject) => {
+      // Production'da temp directory'yi kontrol et
+      if (process.env.NODE_ENV === 'production') {
+        const tempDir = path.dirname(DB_PATH);
+        if (!fs.existsSync(tempDir)) {
+          fs.mkdirSync(tempDir, { recursive: true });
+        }
+      }
+
       this.db = new sqlite3.Database(DB_PATH, (err) => {
         if (err) {
           console.error('Error opening database:', err);
           reject(err);
         } else {
-          console.log('Connected to SQLite database');
+          console.log(`Connected to SQLite database at: ${DB_PATH}`);
           this.createTables().then(resolve).catch(reject);
         }
       });

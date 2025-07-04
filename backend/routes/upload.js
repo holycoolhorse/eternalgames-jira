@@ -7,8 +7,12 @@ const { authenticateToken, checkProjectAccess } = require('../middleware/auth');
 
 const router = express.Router();
 
+// Vercel'de uploads directory için optimize edilmiş path
+const uploadsDir = process.env.NODE_ENV === 'production' 
+  ? '/tmp/uploads'  // Vercel temp directory
+  : path.join(__dirname, '..', 'uploads');
+
 // Create uploads directory if it doesn't exist
-const uploadsDir = path.join(__dirname, '..', 'uploads');
 if (!fs.existsSync(uploadsDir)) {
   fs.mkdirSync(uploadsDir, { recursive: true });
 }
