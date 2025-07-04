@@ -1,69 +1,46 @@
 const { Pool } = require('pg');
 const fs = require('fs');
 
-// For Supabase SSL connection
-process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
-
 class Database {
   constructor() {
     this.pool = null;
     this.initialized = false;
-    this.isPostgreSQL = false;
-    this.db = null;
   }
 
   async initialize() {
     if (this.initialized) return;
 
     try {
-      console.log('🔄 Database initialization starting...');
-      console.log('DATABASE_URL exists:', !!process.env.DATABASE_URL);
-      
       // PostgreSQL connection
       if (process.env.DATABASE_URL) {
-        console.log('✅ Using PostgreSQL (Supabase)');
-        
-        // Supabase requires SSL but with self-signed certificates
         this.pool = new Pool({
           connectionString: process.env.DATABASE_URL,
-          ssl: {
-            rejectUnauthorized: false,
-            require: true
-          },
-          max: 10,
-          idleTimeoutMillis: 30000,
-          connectionTimeoutMillis: 10000,
+          ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
         });
-        
-        this.isPostgreSQL = true;
-        
-        // Test connection
-        const client = await this.pool.connect();
-        console.log('✅ Connected to PostgreSQL database');
-        client.release();
-
-        // Create tables
-        await this.createTables();
-        console.log('✅ PostgreSQL tables created/verified');
       } else {
-        console.log('⚠️ DATABASE_URL not found, using SQLite fallback');
         // Fallback to SQLite for local development
         const sqlite3 = require('sqlite3').verbose();
         const path = require('path');
         
         const dbPath = path.join(__dirname, '..', 'database.sqlite');
         this.db = new sqlite3.Database(dbPath);
-        this.isPostgreSQL = false;
+        console.log('Using SQLite for local development');
         await this.createSQLiteTables();
-        console.log('✅ SQLite tables created/verified');
+        this.initialized = true;
+        return;
       }
-      
+
+      // Test PostgreSQL connection
+      const client = await this.pool.connect();
+      console.log('Connected to PostgreSQL database');
+      client.release();
+
+      // Create tables
+      await this.createTables();
       this.initialized = true;
-      console.log('✅ Database initialization complete');
       
     } catch (error) {
-      console.error('❌ Database initialization error:', error);
-      // Don't throw error - let the application continue
+      console.error('Database initialization error:', error);
     }
   }
 
@@ -82,19 +59,9 @@ class Database {
         id SERIAL PRIMARY KEY,
         name VARCHAR(255) NOT NULL,
         description TEXT,
-        key VARCHAR(10) NOT NULL,
-        owner_id INTEGER REFERENCES users(id),
         created_by INTEGER REFERENCES users(id),
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-      )`,
-      `CREATE TABLE IF NOT EXISTS project_members (
-        id SERIAL PRIMARY KEY,
-        project_id INTEGER REFERENCES projects(id),
-        user_id INTEGER REFERENCES users(id),
-        role VARCHAR(50) DEFAULT 'Member',
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        UNIQUE(project_id, user_id)
       )`,
       `CREATE TABLE IF NOT EXISTS tasks (
         id SERIAL PRIMARY KEY,
@@ -125,42 +92,12 @@ class Database {
       )`
     ];
 
-    // Additional ALTER TABLE statements for existing tables
-    const alterTables = [
-      `ALTER TABLE projects ADD COLUMN IF NOT EXISTS owner_id INTEGER REFERENCES users(id)`,
-      `ALTER TABLE projects ADD COLUMN IF NOT EXISTS created_by INTEGER REFERENCES users(id)`,
-      `ALTER TABLE projects ADD COLUMN IF NOT EXISTS key VARCHAR(10)`,
-      `ALTER TABLE projects ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP`,
-      `ALTER TABLE users ADD COLUMN IF NOT EXISTS name VARCHAR(255)`
-    ];
-
     const client = await this.pool.connect();
     try {
-      // Create tables first
       for (const sql of tables) {
         await client.query(sql);
       }
-      
-      // Then alter existing tables
-      for (const sql of alterTables) {
-        try {
-          await client.query(sql);
-        } catch (error) {
-          // Ignore errors for columns that already exist
-          if (!error.message.includes('already exists')) {
-            console.error('ALTER TABLE error:', error.message);
-          }
-        }
-      }
-      
-      // Update existing users to have name field equal to username
-      try {
-        await client.query(`UPDATE users SET name = username WHERE name IS NULL`);
-      } catch (error) {
-        console.error('Update users name error:', error.message);
-      }
-      
-      console.log('PostgreSQL tables created/updated successfully');
+      console.log('PostgreSQL tables created successfully');
     } catch (error) {
       console.error('Failed to create PostgreSQL tables:', error);
     } finally {
@@ -239,19 +176,14 @@ class Database {
   }
 
   getDb() {
-    if (this.isPostgreSQL && this.pool) {
+    if (this.pool) {
       return this.pool; // PostgreSQL
     }
     return this.db; // SQLite fallback
   }
 
-  async query(text, params = []) {
-    // Ensure database is initialized
-    if (!this.initialized) {
-      await this.initialize();
-    }
-    
-    if (this.isPostgreSQL && this.pool) {
+  async query(text, params) {
+    if (this.pool) {
       // PostgreSQL
       const client = await this.pool.connect();
       try {
@@ -260,7 +192,7 @@ class Database {
       } finally {
         client.release();
       }
-    } else if (this.db) {
+    } else {
       // SQLite fallback
       return new Promise((resolve, reject) => {
         this.db.all(text, params, (err, rows) => {
@@ -268,31 +200,7 @@ class Database {
           else resolve({ rows });
         });
       });
-    } else {
-      throw new Error('Database not initialized');
     }
-  }
-
-  async get(text, params = []) {
-    const result = await this.query(text, params);
-    return result.rows && result.rows.length > 0 ? result.rows[0] : null;
-  }
-
-  async run(text, params = []) {
-    const result = await this.query(text, params);
-    if (this.isPostgreSQL) {
-      return {
-        id: result.rows && result.rows.length > 0 ? result.rows[0].id : null,
-        changes: result.rowCount || 0
-      };
-    } else {
-      return result;
-    }
-  }
-
-  async all(text, params = []) {
-    const result = await this.query(text, params);
-    return result.rows || [];
   }
 }
 

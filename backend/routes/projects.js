@@ -18,7 +18,7 @@ router.get('/', authenticateToken, async (req, res) => {
     let query;
     let params = [];
 
-    if (req.user.role === 'admin') {
+    if (req.user.role === 'Admin') {
       // Admins can see all projects
       query = `
         SELECT p.*, u.name as owner_name,
@@ -42,7 +42,7 @@ router.get('/', authenticateToken, async (req, res) => {
         LEFT JOIN users u ON p.owner_id = u.id
         LEFT JOIN project_members pm ON p.id = pm.project_id
         LEFT JOIN tasks t ON p.id = t.project_id
-        JOIN project_members pm2 ON p.id = pm2.project_id AND pm2.user_id = ?
+        JOIN project_members pm2 ON p.id = pm2.project_id AND pm2.user_id = $1
         GROUP BY p.id
         ORDER BY p.created_at DESC
       `;
@@ -435,6 +435,30 @@ router.get('/:id/tasks', authenticateToken, checkProjectAccess, async (req, res)
   } catch (error) {
     console.error('Get project tasks error:', error);
     res.status(500).json({ message: 'Error fetching project tasks' });
+  }
+});
+
+// Simple debug endpoint for projects
+router.get('/debug', authenticateToken, async (req, res) => {
+  try {
+    await db.initialize();
+    
+    // Simple query to get all projects for admin
+    const result = await db.query('SELECT * FROM projects ORDER BY created_at DESC');
+    
+    res.json({
+      message: 'Projects debug',
+      user: req.user,
+      projects: result.rows || [],
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    console.error('Projects debug error:', error);
+    res.status(500).json({
+      message: 'Projects debug failed',
+      error: error.message,
+      timestamp: new Date().toISOString()
+    });
   }
 });
 

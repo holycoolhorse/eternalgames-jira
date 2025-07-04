@@ -115,6 +115,16 @@ const AppContent = () => {
           } 
         />
         <Route 
+          path="/projects/:id" 
+          element={
+            <ProtectedRoute>
+              <Layout>
+                <ProjectDetailPage />
+              </Layout>
+            </ProtectedRoute>
+          } 
+        />
+        <Route 
           path="/tasks/:id" 
           element={
             <ProtectedRoute>

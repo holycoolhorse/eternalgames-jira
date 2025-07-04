@@ -1,23 +1,30 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 
-// https://vite.dev/config/
 export default defineConfig({
   plugins: [react()],
+  base: '/', // Ensure absolute paths for Vercel
   build: {
     outDir: 'dist',
     assetsDir: 'assets',
-    sourcemap: false, // Disable sourcemaps for production
+    sourcemap: false,
+    minify: 'esbuild',
     rollupOptions: {
       output: {
         manualChunks: {
-          vendor: ['react', 'react-dom', 'react-router-dom'],
-          utils: ['@dnd-kit/core', '@dnd-kit/sortable', '@dnd-kit/utilities']
+          vendor: ['react', 'react-dom'],
+          router: ['react-router-dom']
         }
       }
-    }
+    },
+    chunkSizeWarningLimit: 1000
   },
   server: {
-    port: 5173
+    port: 5173,
+    host: true
+  },
+  preview: {
+    port: 4173,
+    host: true
   }
 })

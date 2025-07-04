@@ -2,45 +2,36 @@ const express = require('express');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
-const { body, validationResult } = require('express-validator');
 const db = require('../config/database');
-const { authenticateToken } = require('../middleware/auth');
 
 const router = express.Router();
 
-// Validation rules
-const registerValidation = [
-  body('email').isEmail().normalizeEmail(),
-  body('password').isLength({ min: 6 }).withMessage('Password must be at least 6 characters'),
-  body('name').trim().isLength({ min: 2 }).withMessage('Name must be at least 2 characters')
-];
+// Test route for debugging
+router.get('/test', (req, res) => {
+  res.json({ message: 'Auth routes working', timestamp: new Date().toISOString() });
+});
 
-const loginValidation = [
-  body('email').isEmail().normalizeEmail(),
-  body('password').notEmpty().withMessage('Password is required')
-];
+// Test register route
+router.post('/register-test', (req, res) => {
+  res.json({ message: 'Register route working', body: req.body, timestamp: new Date().toISOString() });
+});
 
-const forgotPasswordValidation = [
-  body('email').isEmail().normalizeEmail()
-];
-
-const resetPasswordValidation = [
-  body('token').notEmpty().withMessage('Token is required'),
-  body('password').isLength({ min: 6 }).withMessage('Password must be at least 6 characters')
-];
+// Simple register route for testing
+router.post('/register-simple', async (req, res) => {
+  res.json({ message: 'Simple register route working', body: req.body, timestamp: new Date().toISOString() });
+});
 
 // Register new user
-router.post('/register', registerValidation, async (req, res) => {
+router.post('/register', async (req, res) => {
   try {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      return res.status(400).json({ errors: errors.array() });
+    const { email, password, name } = req.body;
+    
+    if (!email || !password || !name) {
+      return res.status(400).json({ message: 'Email, password, and name are required' });
     }
 
-    const { email, password, name } = req.body;
-
     // Check if user already exists
-    const existingUser = await db.get('SELECT id FROM users WHERE email = ?', [email]);
+    const existingUser = await db.get('SELECT id FROM users WHERE email = $1', [email]);
     if (existingUser) {
       return res.status(400).json({ message: 'User already exists with this email' });
     }
@@ -59,14 +50,16 @@ router.post('/register', registerValidation, async (req, res) => {
     const role = userCount.count === 0 ? 'admin' : 'member';
 
     // Create user
-    const result = await db.run(
-      'INSERT INTO users (email, password, name, role) VALUES (?, ?, ?, ?)',
+    const result = await db.query(
+      'INSERT INTO users (email, password_hash, username, role) VALUES ($1, $2, $3, $4) RETURNING id',
       [email, hashedPassword, name, role]
     );
 
+    const userId = result.rows[0].id;
+
     // Generate JWT token
     const token = jwt.sign(
-      { id: result.id, email, role },
+      { id: userId, email, role },
       process.env.JWT_SECRET || 'your-secret-key',
       { expiresIn: '7d' }
     );
@@ -75,7 +68,7 @@ router.post('/register', registerValidation, async (req, res) => {
       message: 'User created successfully',
       token,
       user: {
-        id: result.id,
+        id: userId,
         email,
         name,
         role

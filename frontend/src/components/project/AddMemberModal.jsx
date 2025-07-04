@@ -5,7 +5,7 @@ import api from '../../utils/api';
 const AddMemberModal = ({ isOpen, onClose, projectId, onMemberAdded }) => {
   const [users, setUsers] = useState([]);
   const [selectedUser, setSelectedUser] = useState('');
-  const [selectedRole, setSelectedRole] = useState('member');
+  const [selectedRole, setSelectedRole] = useState('Member');
   const [loading, setLoading] = useState(false);
   const [loadingUsers, setLoadingUsers] = useState(false);
 
@@ -42,23 +42,31 @@ const AddMemberModal = ({ isOpen, onClose, projectId, onMemberAdded }) => {
     try {
       setLoading(true);
       console.log('Adding member:', { projectId, userId: parseInt(selectedUser), role: selectedRole });
+      console.log('Selected user:', selectedUser);
+      console.log('Selected role:', selectedRole);
       
-      await api.post(`/projects/${projectId}/members`, {
+      const payload = {
         userId: parseInt(selectedUser),
         role: selectedRole
-      });
+      };
+      
+      console.log('Sending payload:', payload);
+      
+      const response = await api.post(`/projects/${projectId}/members`, payload);
+      console.log('Response:', response.data);
       
       toast.success('Üye başarıyla eklendi');
       onMemberAdded();
       onClose();
       setSelectedUser('');
-      setSelectedRole('member');
+      setSelectedRole('Member');
     } catch (error) {
       console.error('Add member error:', error);
       console.error('Error response:', error.response?.data);
       console.error('Error status:', error.response?.status);
       
       if (error.response?.status === 400) {
+        console.log('400 Error details:', error.response.data);
         toast.error(error.response.data.message || 'Üye eklenemedi');
       } else if (error.response?.status === 403) {
         toast.error('Bu işlem için yetkiniz yok');
@@ -67,7 +75,7 @@ const AddMemberModal = ({ isOpen, onClose, projectId, onMemberAdded }) => {
       } else if (error.response?.status === 500) {
         toast.error('Sunucu hatası');
       } else {
-        toast.error('Üye eklenirken hata oluştu: ' + (error.message || 'Bilinmeyen hata'));
+        toast.error('Üye eklenirken hata oluştu: ' + (error.response?.data?.message || error.message));
       }
     } finally {
       setLoading(false);
@@ -77,7 +85,7 @@ const AddMemberModal = ({ isOpen, onClose, projectId, onMemberAdded }) => {
   const handleClose = () => {
     onClose();
     setSelectedUser('');
-    setSelectedRole('member');
+    setSelectedRole('Member');
   };
 
   if (!isOpen) return null;
@@ -133,9 +141,9 @@ const AddMemberModal = ({ isOpen, onClose, projectId, onMemberAdded }) => {
               className="input"
               required
             >
-              <option value="reader">Okuyucu</option>
-              <option value="member">Üye</option>
-              <option value="admin">Yönetici</option>
+              <option value="Reader">Okuyucu</option>
+              <option value="Member">Üye</option>
+              <option value="Admin">Yönetici</option>
             </select>
           </div>
 

@@ -10,10 +10,10 @@ const authenticateToken = async (req, res, next) => {
   }
 
   try {
-    const decoded = jwt.verify(token, process.env.JWT_SECRET || 'your-secret-key');
+    const decoded = jwt.verify(token, process.env.JWT_SECRET || 'eternalgames-secret-key');
     
     // Get user from database to ensure they still exist and get current role
-    const user = await db.get('SELECT * FROM users WHERE id = ?', [decoded.id]);
+    const user = await db.get('SELECT * FROM users WHERE id = $1', [decoded.id]);
     
     if (!user) {
       return res.status(401).json({ message: 'User not found' });
@@ -56,15 +56,16 @@ const checkProjectAccess = async (req, res, next) => {
     }
 
     // Check if user is admin (can access all projects)
-    if (req.user.role === 'admin') {
+    if (req.user.role === 'Admin') {
       return next();
     }
 
     // Check if user is member of the project
-    const membership = await db.get(
-      'SELECT * FROM project_members WHERE project_id = ? AND user_id = ?',
+    const membershipResult = await db.query(
+      'SELECT * FROM project_members WHERE project_id = $1 AND user_id = $2',
       [projectId, req.user.id]
     );
+    const membership = membershipResult.rows[0];
 
     if (!membership) {
       return res.status(403).json({ message: 'Access denied to this project' });

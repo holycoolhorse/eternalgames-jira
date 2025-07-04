@@ -22,11 +22,20 @@ const ProjectDetailPage = () => {
       
       const projectRes = await api.get(`/projects/${projectId}`);
       console.log('Project response:', projectRes.data);
-      setProject(projectRes.data.project);
+      
+      if (projectRes.data.success) {
+        setProject(projectRes.data.project);
+      } else {
+        throw new Error('Project not found');
+      }
 
       const tasksRes = await api.get(`/projects/${projectId}/tasks`);
       console.log('Tasks response:', tasksRes.data);
-      setTasks(tasksRes.data.tasks);
+      if (tasksRes.data.success) {
+        setTasks(tasksRes.data.tasks || []);
+      } else {
+        setTasks([]);
+      }
       
       setError(null);
     } catch (err) {

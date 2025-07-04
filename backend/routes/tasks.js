@@ -1,19 +1,56 @@
 const express = require('express');
 const { body, validationResult } = require('express-validator');
 const db = require('../config/database');
-const { authenticateToken, checkProjectAccess } = require('../middleware/auth');
+const { authenticateToken } = require('../middleware/auth');
 
 const router = express.Router();
 
-// Validation rules
-const taskValidation = [
-  body('title').trim().isLength({ min: 1, max: 200 }).withMessage('Title is required (max 200 chars)'),
-  body('description').optional().trim().isLength({ max: 2000 }).withMessage('Description too long (max 2000 chars)'),
-  body('type').isIn(['task', 'bug']).withMessage('Type must be task or bug'),
-  body('priority').isIn(['high', 'medium', 'low']).withMessage('Priority must be high, medium, or low'),
-  body('assigneeId').optional().isInt().withMessage('Assignee ID must be a number'),
-  body('dueDate').optional().isISO8601().withMessage('Due date must be valid ISO date')
-];
+// Create new task
+router.post('/', authenticateToken, [
+  body('title').trim().isLength({ min: 1, max: 200 }).withMessage('Title is required'),
+  body('description').optional().trim().isLength({ max: 2000 }).withMessage('Description too long'),
+  body('priority').isIn(['Low', 'Medium', 'High']).withMessage('Priority must be Low, Medium, or High'),
+  body('status').isIn(['TODO', 'IN_PROGRESS', 'DONE']).withMessage('Status must be TODO, IN_PROGRESS, or DONE'),
+  body('project_id').isInt().withMessage('Project ID is required'),
+  body('assigned_to').optional().isInt().withMessage('Assigned to must be a number')
+], async (req, res) => {
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ 
+        success: false,
+        message: 'Validation error',
+        errors: errors.array() 
+      });
+    }
+
+    await db.initialize();
+    
+    const { title, description, priority, status, project_id, assigned_to } = req.body;
+    
+    console.log('Creating task:', { title, description, priority, status, project_id, assigned_to });
+    
+    const result = await db.query(`
+      INSERT INTO tasks (title, description, priority, status, project_id, assigned_to, created_by, created_at, updated_at)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+      RETURNING *
+    `, [title, description, priority, status, project_id, assigned_to, req.user.id]);
+
+    res.status(201).json({
+      success: true,
+      task: result.rows[0],
+      message: 'Task created successfully'
+    });
+
+  } catch (error) {
+    console.error('Create task error:', error);
+    res.status(500).json({ 
+      success: false,
+      message: 'Error creating task',
+      error: error.message 
+    });
+  }
+});
 
 // Get tasks for a project
 router.get('/project/:projectId', authenticateToken, checkProjectAccess, async (req, res) => {
@@ -25,8 +62,8 @@ router.get('/project/:projectId', authenticateToken, checkProjectAccess, async (
       SELECT t.*, 
              p.name as project_name, p.key as project_key,
              (p.key || '-' || t.task_number) as key,
-             assignee.name as assignee_name, assignee.avatar as assignee_avatar,
-             reporter.name as reporter_name,
+             assignee.username as assignee_name, assignee.avatar as assignee_avatar,
+             reporter.username as reporter_name,
              COUNT(c.id) as comment_count,
              COUNT(a.id) as attachment_count
       FROM tasks t
@@ -35,36 +72,41 @@ router.get('/project/:projectId', authenticateToken, checkProjectAccess, async (
       LEFT JOIN users reporter ON t.reporter_id = reporter.id
       LEFT JOIN comments c ON t.id = c.task_id
       LEFT JOIN attachments a ON t.id = a.task_id
-      WHERE t.project_id = ?
+      WHERE t.project_id = $1
     `;
 
     const params = [projectId];
+    let paramIndex = 2;
 
     // Add filters
     if (status) {
-      query += ' AND t.status = ?';
+      query += ` AND t.status = $${paramIndex}`;
       params.push(status);
+      paramIndex++;
     }
     if (assignee) {
-      query += ' AND t.assignee_id = ?';
+      query += ` AND t.assignee_id = $${paramIndex}`;
       params.push(assignee);
+      paramIndex++;
     }
     if (priority) {
-      query += ' AND t.priority = ?';
+      query += ` AND t.priority = $${paramIndex}`;
       params.push(priority);
+      paramIndex++;
     }
     if (type) {
-      query += ' AND t.type = ?';
+      query += ` AND t.type = $${paramIndex}`;
       params.push(type);
+      paramIndex++;
     }
 
-    query += ' GROUP BY t.id ORDER BY t.created_at DESC';
+    query += ' GROUP BY t.id, p.name, p.key, assignee.username, assignee.avatar, reporter.username ORDER BY t.created_at DESC';
 
-    const tasks = await db.all(query, params);
-    res.json({ tasks });
+    const result = await db.query(query, params);
+    res.json({ success: true, tasks: result.rows || [] });
   } catch (error) {
     console.error('Get tasks error:', error);
-    res.status(500).json({ message: 'Error fetching tasks' });
+    res.status(500).json({ success: false, message: 'Error fetching tasks' });
   }
 });
 
@@ -524,6 +566,41 @@ router.get('/project/:projectId/export', authenticateToken, checkProjectAccess, 
   } catch (error) {
     console.error('Export tasks error:', error);
     res.status(500).json({ message: 'Error exporting tasks' });
+  }
+});
+
+// Simple tasks endpoint for projects
+router.get('/projects/:projectId/tasks', authenticateToken, async (req, res) => {
+  try {
+    await db.initialize();
+    
+    const { projectId } = req.params;
+    
+    // Get all tasks for the project
+    const tasksResult = await db.query(`
+      SELECT t.*, 
+             u.username as assigned_to_name, 
+             c.username as created_by_name
+      FROM tasks t
+      LEFT JOIN users u ON t.assigned_to = u.id
+      LEFT JOIN users c ON t.created_by = c.id
+      WHERE t.project_id = $1
+      ORDER BY t.created_at DESC
+    `, [projectId]);
+    
+    res.json({
+      success: true,
+      tasks: tasksResult.rows || [],
+      message: 'Tasks fetched successfully'
+    });
+    
+  } catch (error) {
+    console.error('Error fetching tasks:', error);
+    res.status(500).json({ 
+      success: false,
+      message: 'Error fetching tasks',
+      error: error.message 
+    });
   }
 });
 

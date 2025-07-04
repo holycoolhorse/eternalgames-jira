@@ -43,14 +43,32 @@ export const AuthProvider = ({ children }) => {
   useEffect(() => {
     const initAuth = async () => {
       const token = localStorage.getItem('token');
-      if (token) {
+      const savedUser = localStorage.getItem('user');
+      
+      if (token && savedUser) {
         try {
-          const response = await api.get('/auth/me');
+          // First use saved user data immediately
+          const userData = JSON.parse(savedUser);
           dispatch({
             type: 'LOGIN_SUCCESS',
-            payload: response.data,
+            payload: { user: userData },
           });
+          
+          // Then verify with server in background
+          try {
+            const response = await api.get('/auth/me');
+            // Update with fresh data from server
+            dispatch({
+              type: 'LOGIN_SUCCESS',
+              payload: response.data,
+            });
+          } catch (error) {
+            // If server verification fails, keep using saved user data
+            console.log('Server verification failed, using saved user data:', error.message);
+            // Don't logout, just keep using saved data
+          }
         } catch (error) {
+          console.error('Error parsing saved user data:', error);
           localStorage.removeItem('token');
           localStorage.removeItem('user');
           dispatch({ type: 'SET_LOADING', payload: false });

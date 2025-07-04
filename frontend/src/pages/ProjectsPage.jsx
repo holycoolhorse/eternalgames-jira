@@ -88,14 +88,12 @@ const ProjectsPage = () => {
             Mevcut projelerinizi görüntüleyin ve yönetin
           </p>
         </div>
-        {(user?.role === 'admin' || user?.role === 'member') && (
-          <button 
-            onClick={() => setShowModal(true)}
-            className="btn-primary"
-          >
-            Yeni Proje
-          </button>
-        )}
+        <button 
+          onClick={() => setShowModal(true)}
+          className="btn-primary"
+        >
+          Yeni Proje
+        </button>
       </div>
 
       {projects.length === 0 ? (
@@ -109,7 +107,7 @@ const ProjectsPage = () => {
           {projects.map(project => (
             <Link
               key={project.id}
-              to={`/project/${project.id}`}
+              to={`/projects/${project.id}`}
               className="card p-6 hover:shadow-md transition-shadow"
             >
               <div className="flex justify-between items-start mb-4">
