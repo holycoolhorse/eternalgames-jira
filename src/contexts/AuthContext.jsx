@@ -83,7 +83,12 @@ export const AuthProvider = ({ children }) => {
 
   const login = async (credentials) => {
     try {
+      console.log('🔄 Login attempt:', credentials);
+      console.log('🔗 API Base URL:', api.defaults.baseURL);
+      
       const response = await api.post('/auth/login', credentials);
+      console.log('✅ Login response:', response.data);
+      
       const { token, user } = response.data;
       
       localStorage.setItem('token', token);
@@ -96,6 +101,10 @@ export const AuthProvider = ({ children }) => {
       
       return { success: true };
     } catch (error) {
+      console.error('❌ Login error:', error);
+      console.error('❌ Error response:', error.response?.data);
+      console.error('❌ Error status:', error.response?.status);
+      
       return {
         success: false,
         message: error.response?.data?.message || 'Giriş başarısız',
