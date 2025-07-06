@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import toast from 'react-hot-toast';
 
@@ -10,6 +10,7 @@ const LoginPage = () => {
   });
   const [isLoading, setIsLoading] = useState(false);
   const { login } = useAuth();
+  const navigate = useNavigate();
 
   const handleChange = (e) => {
     setFormData({
@@ -23,13 +24,21 @@ const LoginPage = () => {
     setIsLoading(true);
 
     try {
+      console.log('🚀 Login form submitted:', formData);
+      
       const result = await login(formData);
+      console.log('📋 Login result:', result);
+      
       if (result.success) {
         toast.success('Başarıyla giriş yapıldı!');
+        console.log('✅ Redirecting to dashboard...');
+        navigate('/dashboard');
       } else {
-        toast.error(result.message);
+        console.error('❌ Login failed:', result.message);
+        toast.error(result.message || 'Giriş başarısız');
       }
     } catch (error) {
+      console.error('💥 Login form error:', error);
       toast.error('Bir hata oluştu');
     } finally {
       setIsLoading(false);
@@ -52,6 +61,17 @@ const LoginPage = () => {
               Kayıt olun
             </Link>
           </p>
+          <div className="mt-4 p-4 bg-blue-50 rounded-md">
+            <p className="text-sm text-blue-800 font-medium">Test Kullanıcıları:</p>
+            <div className="mt-2 space-y-1">
+              <p className="text-xs text-blue-700">
+                <strong>Demo:</strong> demo@test.com / 123456
+              </p>
+              <p className="text-xs text-blue-700">
+                <strong>Admin:</strong> admin@eternalgames.com / admin123
+              </p>
+            </div>
+          </div>
         </div>
         <form className="mt-8 space-y-6" onSubmit={handleSubmit}>
           <div className="rounded-md shadow-sm -space-y-px">

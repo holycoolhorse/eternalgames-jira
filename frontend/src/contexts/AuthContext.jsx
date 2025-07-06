@@ -83,8 +83,44 @@ export const AuthProvider = ({ children }) => {
 
   const login = async (credentials) => {
     try {
-      const response = await api.post('/auth/login', credentials);
-      const { token, user } = response.data;
+      console.log('🔐 Login attempt:', credentials);
+      
+      const baseURL = '/api';
+      const fullURL = `${baseURL}/auth/login`;
+      
+      console.log('🌐 Making request to:', fullURL);
+      
+      const response = await fetch(fullURL, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(credentials)
+      });
+      
+      console.log('📡 Response status:', response.status);
+      console.log('📡 Response ok:', response.ok);
+      
+      const data = await response.json();
+      console.log('📋 Response data:', data);
+      
+      if (!response.ok) {
+        console.error('❌ HTTP Error:', response.status, data);
+        return {
+          success: false,
+          message: data.message || `HTTP ${response.status}`,
+        };
+      }
+      
+      const { token, user } = data;
+      
+      if (!token || !user) {
+        console.error('❌ Invalid response format:', data);
+        return {
+          success: false,
+          message: 'Invalid response from server',
+        };
+      }
       
       localStorage.setItem('token', token);
       localStorage.setItem('user', JSON.stringify(user));
@@ -94,19 +130,44 @@ export const AuthProvider = ({ children }) => {
         payload: { user },
       });
       
+      console.log('✅ Login successful, user stored:', user);
+      
       return { success: true };
     } catch (error) {
+      console.error('❌ Login error:', error);
+      console.error('❌ Error name:', error.name);
+      console.error('❌ Error message:', error.message);
+      
       return {
         success: false,
-        message: error.response?.data?.message || 'Giriş başarısız',
+        message: error.message || 'Network error',
       };
     }
   };
 
   const register = async (userData) => {
     try {
-      const response = await api.post('/auth/register', userData);
-      const { token, user } = response.data;
+      const baseURL = '/api';
+      const fullURL = `${baseURL}/auth/register`;
+      
+      const response = await fetch(fullURL, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(userData)
+      });
+      
+      const data = await response.json();
+      
+      if (!response.ok) {
+        return {
+          success: false,
+          message: data.message || `HTTP ${response.status}`,
+        };
+      }
+      
+      const { token, user } = data;
       
       localStorage.setItem('token', token);
       localStorage.setItem('user', JSON.stringify(user));
@@ -120,7 +181,7 @@ export const AuthProvider = ({ children }) => {
     } catch (error) {
       return {
         success: false,
-        message: error.response?.data?.message || 'Kayıt başarısız',
+        message: error.message || 'Kayıt başarısız',
       };
     }
   };

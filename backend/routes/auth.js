@@ -2,9 +2,28 @@ const express = require('express');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
+const { body, validationResult } = require('express-validator');
 const db = require('../config/database');
 
 const router = express.Router();
+
+// Authentication middleware
+const authenticateToken = (req, res, next) => {
+  const authHeader = req.headers['authorization'];
+  const token = authHeader && authHeader.split(' ')[1];
+
+  if (!token) {
+    return res.status(401).json({ message: 'Access token required' });
+  }
+
+  jwt.verify(token, process.env.JWT_SECRET || 'your-secret-key', (err, user) => {
+    if (err) {
+      return res.status(403).json({ message: 'Invalid or expired token' });
+    }
+    req.user = user;
+    next();
+  });
+};
 
 // Test route for debugging
 router.get('/test', (req, res) => {
@@ -81,26 +100,33 @@ router.post('/register', async (req, res) => {
 });
 
 // Login user
-router.post('/login', loginValidation, async (req, res) => {
+router.post('/login', async (req, res) => {
   try {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      return res.status(400).json({ errors: errors.array() });
-    }
-
     const { email, password } = req.body;
 
+    console.log('🔐 Login attempt for:', email);
+
+    if (!email || !password) {
+      return res.status(400).json({ message: 'Email and password are required' });
+    }
+
     // Find user
-    const user = await db.get('SELECT * FROM users WHERE email = ?', [email]);
+    const user = await db.get('SELECT * FROM users WHERE email = $1', [email]);
     if (!user) {
+      console.log('❌ User not found:', email);
       return res.status(401).json({ message: 'Invalid email or password' });
     }
 
+    console.log('✅ User found:', user.email, 'Role:', user.role);
+
     // Check password
-    const isValidPassword = await bcrypt.compare(password, user.password);
+    const isValidPassword = await bcrypt.compare(password, user.password_hash);
     if (!isValidPassword) {
+      console.log('❌ Invalid password for:', email);
       return res.status(401).json({ message: 'Invalid email or password' });
     }
+
+    console.log('✅ Password valid for:', email);
 
     // Generate JWT token
     const token = jwt.sign(
@@ -109,19 +135,20 @@ router.post('/login', loginValidation, async (req, res) => {
       { expiresIn: '7d' }
     );
 
+    console.log('✅ Token generated for:', email);
+
     res.json({
-      message: 'Login successful',
+      message: '🎉 Login successful!',
       token,
       user: {
         id: user.id,
         email: user.email,
-        name: user.name,
-        role: user.role,
-        avatar: user.avatar
+        name: user.username,
+        role: user.role
       }
     });
   } catch (error) {
-    console.error('Login error:', error);
+    console.error('💥 Login error:', error);
     res.status(500).json({ message: 'Error during login' });
   }
 });
@@ -130,7 +157,7 @@ router.post('/login', loginValidation, async (req, res) => {
 router.get('/me', authenticateToken, async (req, res) => {
   try {
     const user = await db.get(
-      'SELECT id, email, name, role, avatar, created_at FROM users WHERE id = ?',
+      'SELECT id, email, username, role, created_at FROM users WHERE id = $1',
       [req.user.id]
     );
 
@@ -138,7 +165,15 @@ router.get('/me', authenticateToken, async (req, res) => {
       return res.status(404).json({ message: 'User not found' });
     }
 
-    res.json({ user });
+    res.json({ 
+      user: {
+        id: user.id,
+        email: user.email,
+        name: user.username,
+        role: user.role,
+        created_at: user.created_at
+      }
+    });
   } catch (error) {
     console.error('Get user error:', error);
     res.status(500).json({ message: 'Error fetching user data' });
@@ -146,27 +181,19 @@ router.get('/me', authenticateToken, async (req, res) => {
 });
 
 // Update user profile
-router.put('/profile', authenticateToken, [
-  body('name').optional().trim().isLength({ min: 2 }),
-  body('avatar').optional().isURL()
-], async (req, res) => {
+router.put('/profile', authenticateToken, async (req, res) => {
   try {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      return res.status(400).json({ errors: errors.array() });
-    }
-
     const { name, avatar } = req.body;
     const updates = [];
     const values = [];
 
     if (name) {
-      updates.push('name = ?');
+      updates.push('username = $' + (values.length + 1));
       values.push(name);
     }
 
     if (avatar !== undefined) {
-      updates.push('avatar = ?');
+      updates.push('avatar = $' + (values.length + 1));
       values.push(avatar);
     }
 
@@ -174,22 +201,26 @@ router.put('/profile', authenticateToken, [
       return res.status(400).json({ message: 'No valid fields to update' });
     }
 
-    updates.push('updated_at = CURRENT_TIMESTAMP');
     values.push(req.user.id);
 
-    await db.run(
-      `UPDATE users SET ${updates.join(', ')} WHERE id = ?`,
+    await db.query(
+      `UPDATE users SET ${updates.join(', ')}, updated_at = CURRENT_TIMESTAMP WHERE id = $${values.length}`,
       values
     );
 
     const updatedUser = await db.get(
-      'SELECT id, email, name, role, avatar FROM users WHERE id = ?',
+      'SELECT id, email, username, role FROM users WHERE id = $1',
       [req.user.id]
     );
 
     res.json({
       message: 'Profile updated successfully',
-      user: updatedUser
+      user: {
+        id: updatedUser.id,
+        email: updatedUser.email,
+        name: updatedUser.username,
+        role: updatedUser.role
+      }
     });
   } catch (error) {
     console.error('Profile update error:', error);
@@ -198,23 +229,23 @@ router.put('/profile', authenticateToken, [
 });
 
 // Change password
-router.put('/password', authenticateToken, [
-  body('currentPassword').notEmpty().withMessage('Current password is required'),
-  body('newPassword').isLength({ min: 6 }).withMessage('New password must be at least 6 characters')
-], async (req, res) => {
+router.put('/password', authenticateToken, async (req, res) => {
   try {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      return res.status(400).json({ errors: errors.array() });
-    }
-
     const { currentPassword, newPassword } = req.body;
 
+    if (!currentPassword || !newPassword) {
+      return res.status(400).json({ message: 'Current and new passwords are required' });
+    }
+
+    if (newPassword.length < 6) {
+      return res.status(400).json({ message: 'New password must be at least 6 characters' });
+    }
+
     // Get current user with password
-    const user = await db.get('SELECT password FROM users WHERE id = ?', [req.user.id]);
+    const user = await db.get('SELECT password_hash FROM users WHERE id = $1', [req.user.id]);
     
     // Verify current password
-    const isValidPassword = await bcrypt.compare(currentPassword, user.password);
+    const isValidPassword = await bcrypt.compare(currentPassword, user.password_hash);
     if (!isValidPassword) {
       return res.status(400).json({ message: 'Current password is incorrect' });
     }
@@ -224,8 +255,8 @@ router.put('/password', authenticateToken, [
     const hashedPassword = await bcrypt.hash(newPassword, saltRounds);
 
     // Update password
-    await db.run(
-      'UPDATE users SET password = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+    await db.query(
+      'UPDATE users SET password_hash = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2',
       [hashedPassword, req.user.id]
     );
 
@@ -237,17 +268,16 @@ router.put('/password', authenticateToken, [
 });
 
 // Forgot password - generate reset token
-router.post('/forgot-password', forgotPasswordValidation, async (req, res) => {
+router.post('/forgot-password', async (req, res) => {
   try {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      return res.status(400).json({ errors: errors.array() });
-    }
-
     const { email } = req.body;
 
+    if (!email) {
+      return res.status(400).json({ message: 'Email is required' });
+    }
+
     // Check if user exists
-    const user = await db.get('SELECT id, email, name FROM users WHERE email = ?', [email]);
+    const user = await db.get('SELECT id, email, username FROM users WHERE email = $1', [email]);
     if (!user) {
       // Don't reveal if user exists for security
       return res.json({ message: 'If this email exists, you will receive a password reset link.' });
@@ -258,16 +288,15 @@ router.post('/forgot-password', forgotPasswordValidation, async (req, res) => {
     const expiresAt = new Date(Date.now() + 3600000); // 1 hour from now
 
     // Delete any existing tokens for this user
-    await db.run('DELETE FROM password_reset_tokens WHERE user_id = ?', [user.id]);
+    await db.query('DELETE FROM password_reset_tokens WHERE user_id = $1', [user.id]);
 
     // Save reset token
-    await db.run(
-      'INSERT INTO password_reset_tokens (user_id, token, expires_at) VALUES (?, ?, ?)',
+    await db.query(
+      'INSERT INTO password_reset_tokens (user_id, token, expires_at) VALUES ($1, $2, $3)',
       [user.id, token, expiresAt.toISOString()]
     );
 
     // In a real application, you would send an email here
-    // For now, we'll just return the token for testing purposes
     console.log(`Password reset token for ${email}: ${token}`);
 
     res.json({ 
@@ -282,21 +311,24 @@ router.post('/forgot-password', forgotPasswordValidation, async (req, res) => {
 });
 
 // Reset password with token
-router.post('/reset-password', resetPasswordValidation, async (req, res) => {
+router.post('/reset-password', async (req, res) => {
   try {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      return res.status(400).json({ errors: errors.array() });
+    const { token, password } = req.body;
+
+    if (!token || !password) {
+      return res.status(400).json({ message: 'Token and password are required' });
     }
 
-    const { token, password } = req.body;
+    if (password.length < 6) {
+      return res.status(400).json({ message: 'Password must be at least 6 characters' });
+    }
 
     // Find valid token
     const resetToken = await db.get(`
-      SELECT prt.*, u.email, u.name 
+      SELECT prt.*, u.email, u.username 
       FROM password_reset_tokens prt 
       JOIN users u ON prt.user_id = u.id 
-      WHERE prt.token = ? AND prt.expires_at > datetime('now') AND prt.used = FALSE
+      WHERE prt.token = $1 AND prt.expires_at > CURRENT_TIMESTAMP AND prt.used = FALSE
     `, [token]);
 
     if (!resetToken) {
@@ -308,14 +340,14 @@ router.post('/reset-password', resetPasswordValidation, async (req, res) => {
     const hashedPassword = await bcrypt.hash(password, saltRounds);
 
     // Update password
-    await db.run(
-      'UPDATE users SET password = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+    await db.query(
+      'UPDATE users SET password_hash = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2',
       [hashedPassword, resetToken.user_id]
     );
 
     // Mark token as used
-    await db.run(
-      'UPDATE password_reset_tokens SET used = TRUE WHERE id = ?',
+    await db.query(
+      'UPDATE password_reset_tokens SET used = TRUE WHERE id = $1',
       [resetToken.id]
     );
 
@@ -335,7 +367,7 @@ router.get('/verify-reset-token/:token', async (req, res) => {
       SELECT prt.*, u.email 
       FROM password_reset_tokens prt 
       JOIN users u ON prt.user_id = u.id 
-      WHERE prt.token = ? AND prt.expires_at > datetime('now') AND prt.used = FALSE
+      WHERE prt.token = $1 AND prt.expires_at > CURRENT_TIMESTAMP AND prt.used = FALSE
     `, [token]);
 
     if (!resetToken) {
